@@ -520,14 +520,16 @@ class App:
         paned_window.pack(fill=tk.BOTH, expand=True)
 
         # Seção "Receita"
+        renda_liquida_tab = self.renda_liquida_crgd
         frame_receita = tk.Frame(paned_window)
         paned_window.add(frame_receita)
         ttk.Label(frame_receita, text="Receita", font=("Arial", 16, "bold"), foreground="blue").pack(pady=10)
         tree_receita = self.create_treeview(frame_receita, columns=('Descrição', 'Valor'))
         #Centraliza o valor da coluna Valor
         tree_receita.column('Valor', anchor='center')
-        
-        tree_receita.insert('', 'end', values=("Renda Líquida", f"R$ {self.renda_liquida_crgd}"))  # Usar self.renda_liquida em vez de self.renda_liquida_entry.get()
+        renda_liquida_tab = str(renda_liquida_tab)
+        renda_liquida_tab = renda_liquida_tab.replace('.',',')
+        tree_receita.insert('', 'end', values=("Renda Líquida", f"R$ {renda_liquida_tab}"))  # Usar self.renda_liquida em vez de self.renda_liquida_entry.get()
         tree_receita.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
 
         # Seção "Gastos Fixos"
@@ -541,8 +543,9 @@ class App:
         total_gastos_fixos = 0
         for gasto in self.gastos_fixos_crgd:
             tree_gastos_fixos.insert('', 'end', values=(gasto["descricao"], f"R$ {gasto['valor']}"))
+            gasto["valor"] = gasto["valor"].replace(",", ".")
             total_gastos_fixos += float(gasto["valor"])
-        tree_gastos_fixos.insert('', 'end', values=("Total Gastos Fixos", f"R$ {total_gastos_fixos.replace('.','.')}"))
+        tree_gastos_fixos.insert('', 'end', values=("Total Gastos Fixos", f"R$ {str(total_gastos_fixos).replace('.',',')}"))
         tree_gastos_fixos.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
 
         # Seção "Cartões"
@@ -550,6 +553,7 @@ class App:
         paned_window.add(frame_cartoes)
         ttk.Label(frame_cartoes, text="Cartões", font=("Arial", 16, "bold"), foreground="blue").pack(pady=10)
         tree_cartoes = self.create_treeview(frame_cartoes, columns=('Descrição', 'Valor', 'Parcela Atual', 'Total de Parcelas'))
+        
         #Centraliza o valor das colunas Valor, Parcela Atual e Total de Parcelas
         tree_cartoes.column('Valor', anchor='center')
         tree_cartoes.column('Parcela Atual', anchor='center')
@@ -565,18 +569,20 @@ class App:
                     parcela_atual, total_parcelas = gasto["parcela"].split("/")
                 else:
                     parcela_atual = "-"
-                    total_parcelas = parcela_atual
-                    
+                    total_parcelas = parcela_atual                    
+                
                 tree_cartoes.insert('', 'end', values=(descricao, f"R$ {valor}", parcela_atual, total_parcelas))
-                total_gastos_cartao += float(gasto["valor"].replace(".", ","))
-        tree_cartoes.insert('', 'end', values=("Total Gastos Cartão", f"R$ {total_gastos_cartao}", "", ""))
+                gasto["valor"] = gasto["valor"].replace(",", ".")
+                total_gastos_cartao += float(gasto["valor"])
+        tree_cartoes.insert('', 'end', values=("Total Gastos Cartão", f"R$ {str(total_gastos_cartao).replace('.',',')}", "", ""))
         tree_cartoes.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
 
         # Somatório total
         total_gastos = total_gastos_fixos + total_gastos_cartao
 
         # Valor final após descontar a receita líquida e o total de gastos
-        valor_final = float(self.renda_liquida_crgd) - total_gastos
+        renda_liquida_tab = renda_liquida_tab.replace(',','.')
+        valor_final = float(renda_liquida_tab) - total_gastos
 
         labels_frame = tk.Frame(inner_frame)
         labels_frame.pack(pady=10, fill=tk.X)
