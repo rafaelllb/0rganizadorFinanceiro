@@ -1,0 +1,747 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from pandastable import Table
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+import datetime
+import pyperclip
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Organizador Financeiro")
+
+        self.canvas = tk.Canvas(root)
+        #Cria a barra de rolagem
+        self.scrollbar = tk.Scrollbar(root, orient="vertical", command=self.canvas.yview)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)        
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.bind('<Configure>', lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        
+        #Permite à barra de rolagem responder à rolagem do mouse
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Frame Principal
+        self.frame = tk.Frame(self.canvas)
+        self.canvas.create_window((0,0), window=self.frame, anchor="nw")
+        
+        self.frame.bind('<Configure>', lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        
+        # Frame de Entrada de Dados
+        self.data_frame = tk.Frame(self.frame)
+        self.data_frame.grid(row=0, column=0, sticky="nsew")
+
+        tk.Label(self.data_frame, text="Renda Líquida:").grid(row=0, column=0)
+        self.renda_liquida_entry = tk.Entry(self.data_frame)
+        self.renda_liquida_entry.grid(row=0, column=1)
+
+        self.btn_add_gastos_fixos = tk.Button(self.data_frame, text="Adicionar Gastos Fixos", command=self.add_gastos_fixos_fields)
+        self.btn_add_gastos_fixos.grid(row=1, column=0, columnspan=2, pady=20)
+
+        self.gastos_fixos_frame = tk.Frame(self.data_frame)
+        self.gastos_fixos_frame.grid(row=2, column=0, columnspan=2)
+
+        self.btn_salvar_gastos_fixos = tk.Button(self.data_frame, text="Salvar Gastos Fixos", command=self.salvar_gastos_fixos)
+        self.btn_salvar_gastos_fixos.grid(row=3, column=0, columnspan=2, pady=20)
+
+        self.btn_add_cartao = tk.Button(self.data_frame, text="Adicionar Cartão", command=self.add_cartao_frame)
+        self.btn_add_cartao.grid(row=4, column=0, columnspan=2, pady=20)
+
+        self.cartoes_frame = tk.Frame(self.data_frame)
+        self.cartoes_frame.grid(row=5, column=0, columnspan=2)
+
+        self.btn_tabela = tk.Button(self.data_frame, text="Detalhar Finanças", command=self.mostrar_tabela)
+        self.btn_tabela.grid(row=7, column=0, pady=20)
+
+        self.btn_salvar_txt = tk.Button(self.data_frame, text="Salvar em TXT", command=self.salvar_txt)
+        self.btn_salvar_txt.grid(row=7, column=1, columnspan=2, pady=20)
+        
+        # Frame do Dashboard
+        self.dashboard_frame = tk.Frame(self.frame)
+        self.dashboard_frame.grid(row=1, column=0, sticky="nsew")
+        
+        # Widgets do Dashboard
+        self.lbl_mes_ano_dashboard = tk.Label(self.dashboard_frame)
+        self.lbl_mes_ano_dashboard.grid(row=0, column=1)
+        
+        self.btn_mes_anterior = tk.Button(self.dashboard_frame, text="<<", command=self.navegar_mes_anterior)
+        self.btn_mes_anterior.grid(row=0, column=0)
+
+        self.btn_mes_seguinte = tk.Button(self.dashboard_frame, text=">>", command=self.navegar_mes_seguinte)
+        self.btn_mes_seguinte.grid(row=0, column=2)
+        
+        # Carregar dados do arquivo ao iniciar o programa
+        self.dados_mes = {}
+        self.renda_liquida = 0
+        self.gastos_fixos = []
+        self.cartoes = []
+        self.mes_ano_atual = self.obter_mes_ano_atual()
+        self.mes_ano_dsbd = 0
+        
+        self.dados_crgd = self.carregar_dados()
+        
+        if self.mes_ano_atual not in self.dados_crgd:
+            self.mes_ano_crgd = None
+            self.renda_liquida_crgd = 0
+            self.gastos_fixos_crgd = []
+            self.cartoes_crgd = []
+        else:
+            self.mes_ano_crgd = self.mes_ano_atual
+            self.renda_liquida_crgd = self.dados_crgd[self.mes_ano_atual]['renda_liquida']
+            self.gastos_fixos_crgd = self.dados_crgd[self.mes_ano_atual]['gastos_fixos']
+            self.cartoes_crgd = self.dados_crgd[self.mes_ano_atual]['cartoes']
+        
+        self.atualizar_dashboard(self.mes_ano_crgd, self.renda_liquida_crgd, self.gastos_fixos_crgd, self.cartoes_crgd)
+        
+    def obter_mes_ano_atual(self):
+        # Obtém a data atual
+        data_atual = datetime.datetime.today()
+        
+        # Formata a data para o formato MM/AAAA
+        mes_ano_atual = data_atual.strftime('%m/%Y')
+        
+        return mes_ano_atual
+
+    def carregar_dados(self):
+        dados = {}
+        filepath = filedialog.askopenfilename(filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        
+        if not filepath:
+            return dados
+
+        with open(filepath, "r") as file:
+            lines = file.readlines()
+
+        mode = None
+        mes_ano = None
+
+        for line in lines:
+            line = line.strip()
+
+            if not line:
+                continue
+
+            if "Mês/Ano" in line:
+                mode = "mes_ano"
+                continue
+            elif "Renda Líquida" in line:
+                mode = "renda_liquida"
+                continue
+            elif "Gastos Fixos" in line or line == "Descrição;Valor":
+                mode = "gastos_fixos"
+                continue
+            elif "Detalhes dos Cartões" in line or line == "Nome;Banco;Limite":
+                mode = "cartoes"
+                continue
+            elif "Gastos do Cartão" in line or line == "Parcela;Descrição;Valor":
+                mode = "gastos_cartao"
+                continue
+
+            if mode == "mes_ano":
+                mes_ano = line
+                if mes_ano not in dados:
+                    dados[mes_ano] = {
+                        'renda_liquida': 0,
+                        'gastos_fixos': [],
+                        'cartoes': []
+                    }
+            elif mode == "renda_liquida":
+                dados[mes_ano]['renda_liquida'] = float(line.replace(',', '.'))
+            elif mode == "gastos_fixos":
+                descricao, valor = line.split(";")
+                gasto_fixo = {"descricao": descricao, "valor": valor}
+                dados[mes_ano]['gastos_fixos'].append(gasto_fixo)
+            elif mode == "cartoes":
+                nome, banco, limite = line.split(";")
+                cartao = {"nome": nome, "banco": banco, "limite": limite, "gastos": []}
+                dados[mes_ano]['cartoes'].append(cartao)
+            elif mode == "gastos_cartao":
+                parcela, descricao, valor = line.split(";")
+                gasto_cartao = {"parcela": parcela, "descricao": descricao, "valor": valor}
+                dados[mes_ano]['cartoes'][-1]["gastos"].append(gasto_cartao)
+
+        return dados
+    
+    def atualizar_dashboard(self, mes_ano, renda_liquida, gastos_fixos, cartoes):
+        # Remover gráficos antigos, se existirem
+        for widget in self.dashboard_frame.winfo_children():
+            if isinstance(widget, FigureCanvasTkAgg):
+                widget.destroy()
+                
+        if mes_ano is None:
+            tk.Label(self.dashboard_frame, text="Sem dados disponíveis para este mês.").grid(row=0, column=1, columnspan=2, pady=20)
+            return
+        else:
+            self.lbl_mes_ano_dashboard.config(text=mes_ano)
+
+        # Renda líquida vs. gastos totais
+        renda_liquida_dsbd = float(renda_liquida)
+        total_gastos_fixos = sum([float(gasto["valor"].replace(",", ".")) for gasto in gastos_fixos])
+        total_gastos_cartao = sum([sum([float(gasto["valor"].replace(",",".")) for gasto in cartao["gastos"]]) for cartao in cartoes])
+        total_gastos = total_gastos_fixos + total_gastos_cartao
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        bars = ax.bar(["Renda Líquida", "Gastos Totais"], [renda_liquida_dsbd, total_gastos], color=['green', 'red'])
+        ax.set_title("Renda Líquida vs. Gastos Totais")
+
+        def hover(event):
+            for txt in ax.texts:
+                txt.remove()
+            for bar in bars:
+                if bar.contains(event)[0]:
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width() / 2, height + 0.05, f'{height:.2f}', ha="center", va="bottom", color="black", fontsize=10)
+            fig.canvas.draw_idle()  # para atualizar o gráfico
+
+        fig.canvas.mpl_connect('motion_notify_event', hover)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.dashboard_frame)
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.grid(row=1, column=0, padx=20, pady=20)
+
+        # Gráfico circular mostrando a distribuição de gastos
+        fig2, ax2 = plt.subplots(figsize=(6, 4))
+        wedges, texts, autotexts = ax2.pie([total_gastos_fixos, total_gastos_cartao], 
+                                            labels=["Gastos Fixos", "Gastos Cartão"], 
+                                            autopct='%1.1f%%', 
+                                            startangle=90, 
+                                            colors=['gold', 'lightskyblue'])
+
+        # Ajustando a cor do texto para ser sempre visível
+        for autotext in autotexts:
+            autotext.set_color('black')
+
+        ax2.axis('equal')
+        ax2.set_title("Distribuição de Gastos")
+
+        hover_annotation = ax2.annotate("", xy=(0,0), xytext=(20,20),
+                                        textcoords="offset points",
+                                        bbox=dict(boxstyle="round", fc="w"),
+                                        arrowprops=dict(arrowstyle="->"))
+
+        hover_annotation.set_visible(False)
+
+        def hover_pie(event):
+            has_hovered = False
+            for i, wedge in enumerate(wedges):
+                if wedge.contains_point([event.x, event.y]):
+                    hover_annotation.xy = wedge.center
+                    if i == 0:  # Gastos Fixos
+                        hover_annotation.set_text(f'${total_gastos_fixos:.2f}')
+                    else:      # Gastos Cartão
+                        hover_annotation.set_text(f'${total_gastos_cartao:.2f}')
+                    hover_annotation.set_visible(True)
+                    has_hovered = True
+                    break
+            if not has_hovered:
+                hover_annotation.set_visible(False)
+            fig2.canvas.draw_idle()
+
+        fig2.canvas.mpl_connect('motion_notify_event', hover_pie)
+
+        canvas2 = FigureCanvasTkAgg(fig2, master=self.dashboard_frame)
+        canvas2_widget = canvas2.get_tk_widget()
+        canvas2_widget.grid(row=1, column=1, padx=20, pady=20)
+        
+    def navegar_mes_anterior(self):
+        if self.mes_ano_dsbd == 0:
+            mes, ano = map(int, self.mes_ano_crgd.split('/'))
+        else:
+            mes, ano = map(int, self.mes_ano_dsbd.split('/'))
+        if mes == 1:
+            mes, ano = 12, ano - 1
+        else:
+            mes -= 1
+        mes_ano_alterado = f"{mes:02d}/{ano}"
+        self.mes_ano_dsbd = mes_ano_alterado
+        self.atualizar_dados_e_graficos(mes_ano_alterado, "anterior")
+    
+    def navegar_mes_seguinte(self):
+        if self.mes_ano_dsbd == 0:
+            mes, ano = map(int, self.mes_ano_crgd.split('/'))
+        else:
+            mes, ano = map(int, self.mes_ano_dsbd.split('/'))
+        if mes == 12:
+            mes, ano = 1, ano + 1
+        else:
+            mes += 1
+        mes_ano_alterado = f"{mes:02d}/{ano}"
+        self.mes_ano_dsbd = mes_ano_alterado
+        self.atualizar_dados_e_graficos(mes_ano_alterado, "seguinte")
+    
+    def atualizar_dados_e_graficos(self, mes_ano, direcao):
+        self.lbl_mes_ano_dashboard.config(text=mes_ano)
+        
+        # Verificar se os dados para o mês selecionado estão disponíveis
+        if mes_ano in self.dados_crgd:
+            dados_dashboard = self.dados_crgd[mes_ano]
+        else:
+            # Se os dados não foram carregados para o mês selecionado, use os dados do mês anterior/seguinte
+            mes_referencia, ano_referencia = map(int, mes_ano.split('/'))
+            if direcao == "seguinte":
+                mes_referencia = (mes_referencia - 1) % 12
+            else:  # direcao == "anterior"
+                mes_referencia = (mes_referencia + 1) % 12
+            ano_referencia -= (1 if mes_referencia == 0 and direcao == "seguinte" else 0)
+            ano_referencia += (1 if mes_referencia == 0 and direcao == "anterior" else 0)
+            mes_referencia = 12 if mes_referencia == 0 else mes_referencia
+            mes_ano_referencia = f"{mes_referencia:02d}/{ano_referencia}"
+            dados_dashboard = self.dados_crgd.get(mes_ano_referencia, {})
+
+            # Atualize os gastos de parcela
+            for cartao in dados_dashboard.get('cartoes', []):
+                novos_gastos = []
+                for gasto in cartao["gastos"]:
+                    if gasto["parcela"] != "M":
+                        parcela_atual, total_parcelas = map(int, gasto["parcela"].split('/'))
+                        # Modificar a lógica de atualização com base na direção
+                        if direcao == "seguinte" and parcela_atual < total_parcelas:
+                            gasto["parcela"] = f"{parcela_atual + 1}/{total_parcelas}"
+                            novos_gastos.append(gasto)
+                        elif direcao == "anterior" and parcela_atual > 1:
+                            gasto["parcela"] = f"{parcela_atual - 1}/{total_parcelas}"
+                            novos_gastos.append(gasto)
+                    else:
+                        # Se for um gasto mensal, apenas adicione de volta à lista
+                        novos_gastos.append(gasto)
+                cartao["gastos"] = novos_gastos
+        
+        # Extraia os dados para uso
+        mes_ano = dados_dashboard.get('mes_ano', mes_ano)
+        renda_liquida = dados_dashboard.get('renda_liquida', 0)
+        gastos_fixos = dados_dashboard.get('gastos_fixos', [])
+        cartoes = dados_dashboard.get('cartoes', [])
+        
+        # Atualize os gráficos e quaisquer outros elementos que dependem dos dados
+        self.atualizar_dashboard(mes_ano, renda_liquida, gastos_fixos, cartoes)
+
+    def add_gastos_fixos_fields(self):
+        row = len(self.gastos_fixos_frame.winfo_children()) // 2
+
+        tk.Label(self.gastos_fixos_frame, text="Descrição:").grid(row=row, column=0)
+        descricao_entry = tk.Entry(self.gastos_fixos_frame)
+        descricao_entry.grid(row=row, column=1)
+
+        tk.Label(self.gastos_fixos_frame, text="Valor:").grid(row=row+1, column=0)
+        valor_entry = tk.Entry(self.gastos_fixos_frame)
+        valor_entry.grid(row=row+1, column=1)
+    
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(-1*(event.delta//120), "units")
+    
+    def salvar_gastos_fixos(self):
+        descricao = self.gastos_fixos_frame.winfo_children()[1].get()
+        valor = self.gastos_fixos_frame.winfo_children()[3].get()
+
+        gasto_fixo = {
+            "descricao": descricao,
+            "valor": valor
+        }
+
+        self.gastos_fixos.append(gasto_fixo)
+        self.atualizar_dashboard()
+
+    def add_cartao_frame(self):
+        self.btn_add_cartao.config(state=tk.DISABLED)  # Desativar o botão add_cartao        
+        if len(self.cartoes_frame.winfo_children()) > 0:
+            row = len(self.cartoes_frame.winfo_children())
+            tk.Label(self.cartoes_frame, text="").grid(row=row, column=0)
+            row = row+1
+        else:
+            row = 1
+        
+        # Campos para informações do cartão
+        tk.Label(self.cartoes_frame, text="Nome do Cartão:").grid(row=row, column=0)
+        nome_cartao_entry = tk.Entry(self.cartoes_frame)
+        nome_cartao_entry.grid(row=row, column=1)
+
+        tk.Label(self.cartoes_frame, text="Banco do Cartão:").grid(row=row+1, column=0)
+        banco_cartao_entry = tk.Entry(self.cartoes_frame)
+        banco_cartao_entry.grid(row=row+1, column=1)
+
+        tk.Label(self.cartoes_frame, text="Limite do Cartão:").grid(row=row+2, column=0)
+        limite_cartao_entry = tk.Entry(self.cartoes_frame)
+        limite_cartao_entry.grid(row=row+2, column=1)
+
+        # Campos para gastos
+        gastos_frame = tk.Frame(self.cartoes_frame)
+        gastos_frame.grid(row=row+3, column=0, columnspan=2)
+        self.add_gasto_fields(gastos_frame)
+
+        # Verifique se os botões já estão na tela
+        if row == 1:
+            # Botão para adicionar mais gastos
+            self.btn_add_gasto = tk.Button(self.cartoes_frame, text="Adicionar Gasto", command=lambda: self.add_gasto_fields(gastos_frame))
+            self.btn_add_gasto.grid(row=row+4, column=0, columnspan=2)
+        else:
+            self.btn_add_gasto.grid(row=row+4, column=0, columnspan=2)
+
+        if row == 1:
+            self.btn_salvar_cartao = tk.Button(self.cartoes_frame, text="Salvar Cartão", command=lambda: self.salvar_cartao(nome_cartao_entry, banco_cartao_entry, limite_cartao_entry, gastos_frame))
+            self.btn_salvar_cartao.grid(row=row+5, column=0, columnspan=2)
+        else:
+            self.btn_salvar_cartao.grid(row=row+5, column=0, columnspan=2)
+
+    def add_gasto_fields(self, gastos_frame=None):
+        if gastos_frame is None:
+            gastos_frame = self.gastos_frame
+        
+        if len(gastos_frame.winfo_children()) > 0:
+            row = len(gastos_frame.winfo_children())+1
+            tk.Label(gastos_frame, text="").grid(row=row, column=0)
+            row = row+1
+        else:
+            row = 0
+
+        tk.Label(gastos_frame, text="Descrição:").grid(row=row, column=0)
+        descricao_entry = tk.Entry(gastos_frame)
+        descricao_entry.grid(row=row, column=1)
+
+        tk.Label(gastos_frame, text="Valor:").grid(row=row+1, column=0)
+        valor_entry = tk.Entry(gastos_frame)
+        valor_entry.grid(row=row+1, column=1)
+
+        self.is_mensal_var = tk.BooleanVar()
+        is_mensal_cb = tk.Checkbutton(gastos_frame, text="Mensal?", variable=self.is_mensal_var)
+        is_mensal_cb.grid(row=row+2, column=0, columnspan=2)
+
+        parcela_atual_label = tk.Label(gastos_frame, text="Parcela Atual:")
+        parcela_atual_label.grid(row=row+3, column=0)
+        parcela_atual_entry = tk.Entry(gastos_frame)
+        parcela_atual_entry.grid(row=row+3, column=1)
+
+        total_parcelas_label = tk.Label(gastos_frame, text="Total de Parcelas:")
+        total_parcelas_label.grid(row=row+4, column=0)
+        total_parcelas_entry = tk.Entry(gastos_frame)
+        total_parcelas_entry.grid(row=row+4, column=1)
+
+        # Chamar a função toggle_parcela_fields quando a checkbox for clicada
+        is_mensal_cb.config(command=lambda: self.toggle_parcela_fields(self.is_mensal_var, parcela_atual_label, parcela_atual_entry, total_parcelas_label, total_parcelas_entry))
+        
+    def toggle_parcela_fields(self, is_mensal_var, parcela_atual_label, parcela_atual_entry, total_parcelas_label, total_parcelas_entry):
+        if is_mensal_var.get():
+            parcela_atual_label.grid_remove()
+            parcela_atual_entry.grid_remove()
+            total_parcelas_label.grid_remove()
+            total_parcelas_entry.grid_remove()
+        else:
+            parcela_atual_label.grid()
+            parcela_atual_entry.grid()
+            total_parcelas_label.grid()
+            total_parcelas_entry.grid()
+
+    def salvar_cartao(self, nome_cartao_entry, banco_cartao_entry, limite_cartao_entry, gastos_frame):
+        self.btn_add_cartao.config(state=tk.NORMAL)
+        nome = nome_cartao_entry.get()
+        banco = banco_cartao_entry.get()
+        limite = limite_cartao_entry.get()
+
+        cartao = {
+            "nome": nome,
+            "banco": banco,
+            "limite": limite,
+            "gastos": []
+        }
+
+        children = gastos_frame.winfo_children()
+        for i in range(0, len(children), 10):  # Ajustado para considerar que temos Labels, Entries e Checkbuttons
+            descricao = children[i+1].get()  # Pegando o Entry após o Label
+            valor = children[i+3].get()      # Pegando o Entry após o Label
+
+            if descricao and valor:
+                gasto = {
+                    "descricao": descricao,
+                    "valor": valor
+                }
+
+                if not self.is_mensal_var:
+                    parcela_atual = children[i+7].get()  # Pegando o Entry após o Label
+                    total_parcelas = children[i+9].get()  # Pegando o Entry após o Label
+                    gasto["parcela_atual"] = parcela_atual
+                    gasto["total_parcelas"] = total_parcelas
+
+                cartao["gastos"].append(gasto)
+
+        self.cartoes.append(cartao)
+
+        # Atualizar a lista de cartões na janela principal
+        self.atualizar_lista_cartoes()
+        self.atualizar_dashboard()
+
+    def mostrar_gastos_futuros(self):
+        gastos_futuros = {}
+
+        for cartao in self.cartoes:
+            for gasto in cartao["gastos"]:
+                if not gasto["is_mensal"] and gasto["parcela_atual"] and gasto["total_parcelas"]:
+                    parcela_atual = int(gasto["parcela_atual"])
+                    total_parcelas = int(gasto["total_parcelas"])
+                    for i in range(parcela_atual + 1, total_parcelas + 1):
+                        mes = f"Parcela {i} de {total_parcelas}"
+                        if mes not in gastos_futuros:
+                            gastos_futuros[mes] = 0
+                        gastos_futuros[mes] += float(gasto["valor"].replace(",", "."))
+
+        # Exibindo os gastos futuros em uma nova janela
+        gastos_win = tk.Toplevel(self.root)
+        gastos_win.title("Gastos Futuros")
+
+        for mes, valor in gastos_futuros.items():
+            tk.Label(gastos_win, text=f"{mes}: R$ {valor:.2f}").pack(pady=2)
+
+    def mostrar_tabela(self):
+        tabela_win = tk.Toplevel(self.root)
+        tabela_win.title("Finanças Detalhadas")
+        tabela_win.grab_release()
+
+        # Criando um Canvas e associando uma barra de rolagem
+        canvas = tk.Canvas(tabela_win)
+        scrollbar = ttk.Scrollbar(tabela_win, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Frame interno onde todos os widgets serão colocados
+        inner_frame = tk.Frame(canvas)
+        canvas.create_window((0, 0), window=inner_frame, anchor='nw')
+
+        # Função para atualizar a rolagem com o mouse
+        def on_configure(event):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+
+        inner_frame.bind('<Configure>', on_configure)
+        canvas.bind_all('<MouseWheel>', lambda event: canvas.yview_scroll(-1*(event.delta//120), "units"))
+
+        # Usando PanedWindow para permitir redimensionamento
+        paned_window = tk.PanedWindow(inner_frame, orient=tk.VERTICAL)
+        paned_window.pack(fill=tk.BOTH, expand=True)
+
+        # Seção "Receita"
+        frame_receita = tk.Frame(paned_window)
+        paned_window.add(frame_receita)
+        ttk.Label(frame_receita, text="Receita", font=("Arial", 16, "bold"), foreground="blue").pack(pady=10)
+        tree_receita = self.create_treeview(frame_receita, columns=('Descrição', 'Valor'))
+        #Centraliza o valor da coluna Valor
+        tree_receita.column('Valor', anchor='center')
+        
+        tree_receita.insert('', 'end', values=("Renda Líquida", f"R$ {self.renda_liquida_crgd}"))  # Usar self.renda_liquida em vez de self.renda_liquida_entry.get()
+        tree_receita.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
+
+        # Seção "Gastos Fixos"
+        frame_gastos_fixos = tk.Frame(paned_window)
+        paned_window.add(frame_gastos_fixos)
+        ttk.Label(frame_gastos_fixos, text="Gastos Fixos", font=("Arial", 16, "bold"), foreground="blue").pack(pady=10)
+        tree_gastos_fixos = self.create_treeview(frame_gastos_fixos, columns=('Descrição', 'Valor'))
+        #Centraliza o valor da coluna Valor
+        tree_gastos_fixos.column('Valor', anchor='center')
+        
+        total_gastos_fixos = 0
+        for gasto in self.gastos_fixos_crgd:
+            tree_gastos_fixos.insert('', 'end', values=(gasto["descricao"], f"R$ {gasto['valor']}"))
+            total_gastos_fixos += float(gasto["valor"])
+        tree_gastos_fixos.insert('', 'end', values=("Total Gastos Fixos", f"R$ {total_gastos_fixos.replace('.','.')}"))
+        tree_gastos_fixos.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
+
+        # Seção "Cartões"
+        frame_cartoes = tk.Frame(paned_window)
+        paned_window.add(frame_cartoes)
+        ttk.Label(frame_cartoes, text="Cartões", font=("Arial", 16, "bold"), foreground="blue").pack(pady=10)
+        tree_cartoes = self.create_treeview(frame_cartoes, columns=('Descrição', 'Valor', 'Parcela Atual', 'Total de Parcelas'))
+        #Centraliza o valor das colunas Valor, Parcela Atual e Total de Parcelas
+        tree_cartoes.column('Valor', anchor='center')
+        tree_cartoes.column('Parcela Atual', anchor='center')
+        tree_cartoes.column('Total de Parcelas', anchor='center')
+        
+        total_gastos_cartao = 0
+        for cartao in self.cartoes_crgd:
+            tree_cartoes.insert('', 'end', values=(f"{cartao['nome']} ({cartao['banco']})", "", "", ""))
+            for gasto in cartao["gastos"]:
+                descricao = gasto["descricao"]
+                valor = gasto["valor"]
+                if "/" in gasto["parcela"]:
+                    parcela_atual, total_parcelas = gasto["parcela"].split("/")
+                else:
+                    parcela_atual = "-"
+                    total_parcelas = parcela_atual
+                    
+                tree_cartoes.insert('', 'end', values=(descricao, f"R$ {valor}", parcela_atual, total_parcelas))
+                total_gastos_cartao += float(gasto["valor"].replace(".", ","))
+        tree_cartoes.insert('', 'end', values=("Total Gastos Cartão", f"R$ {total_gastos_cartao}", "", ""))
+        tree_cartoes.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
+
+        # Somatório total
+        total_gastos = total_gastos_fixos + total_gastos_cartao
+
+        # Valor final após descontar a receita líquida e o total de gastos
+        valor_final = float(self.renda_liquida_crgd) - total_gastos
+
+        labels_frame = tk.Frame(inner_frame)
+        labels_frame.pack(pady=10, fill=tk.X)
+        
+        # Exibindo o total de gastos e o valor final
+        ttk.Label(labels_frame, text=f"Total Gastos: R$ {format(total_gastos, '.2f').replace('.', ',')}", font=("Arial", 14)).pack(side=tk.LEFT, padx=10)
+        ttk.Label(labels_frame, text=f"Valor após descontos: R$ {format(valor_final, '.2f').replace('.',',')}", font=("Arial", 14)).pack(side=tk.LEFT, padx=10)
+        
+        # Agora, empacote o paned_window depois dos labels
+        paned_window = tk.PanedWindow(inner_frame, orient=tk.VERTICAL)
+        paned_window.pack(fill=tk.BOTH, expand=True)
+            
+    def create_treeview(self, parent, columns):
+        # Estilizando o Treeview
+        style = ttk.Style()
+        style.theme_use("default")
+
+        # Estilo para o Treeview
+        style.configure("Treeview", 
+                        background="white",
+                        foreground="black",
+                        font=("Arial", 10),
+                        rowheight=20,
+                        fieldbackground="white",
+                        borderwidth=1,
+                        relief="solid",
+                        padding=(2, 2))
+
+        # Estilo para o cabeçalho do Treeview
+        style.configure("Treeview.Heading",
+                        foreground="blue",
+                        font=("Arial", 14, "bold"),
+                        borderwidth=1,
+                        relief="solid",
+                        padding=(2, 2))
+
+        # Criando o Treeview
+        tree = ttk.Treeview(parent, columns=columns, show='headings')
+        for col in columns:
+            tree.heading(col, text=col)
+            
+        # Vinculando Ctrl+C ao evento de copiar
+        tree.bind('<Control-c>', lambda event: self.copiar_selecao(tree))
+
+        return tree
+
+    def copiar_selecao(self, tree):
+        # Obtém os itens selecionados
+        selected_items = tree.selection()
+        
+        # Constrói uma string com os valores dos itens selecionados
+        copied_data = []
+        for item in selected_items:
+            values = tree.item(item)['values']
+            copied_data.append('\t'.join(str(v) for v in values))
+        
+        copied_str = '\n'.join(copied_data)
+        
+        # Copia para a área de transferência
+        pyperclip.copy(copied_str)
+
+    def mostrar_detalhes_cartao(self, cartao):
+        detalhes_win = tk.Toplevel(self.root)
+        detalhes_win.title(f"Detalhes do Cartão: {cartao['nome']}")
+
+        tk.Label(detalhes_win, text=f"Banco: {cartao['banco']}").pack(pady=5)
+        tk.Label(detalhes_win, text=f"Limite: {cartao['limite']}").pack(pady=5)
+        tk.Label(detalhes_win, text="Gastos:").pack(pady=5)
+
+        for gasto in cartao["gastos"]:
+                if "parcela_atual" in gasto and "total_parcelas" in gasto:
+                    tk.Label(detalhes_win, text=f"{gasto['descricao']}: {gasto['valor']} (Parcela {gasto['parcela_atual']} de {gasto['total_parcelas']})").pack(pady=2)
+                else:
+                    tk.Label(detalhes_win, text=f"{gasto['descricao']}: {gasto['valor']}").pack(pady=2)
+
+    def ler_txt(self, filepath):
+        with open(filepath, "r") as file:
+            lines = file.readlines()
+
+        # Verificar se o arquivo tem conteúdo suficiente
+        if len(lines) < 3:
+            messagebox.showerror("Erro", "O arquivo selecionado não tem o formato esperado.")
+            return None, None, None
+
+        try:
+            renda_liquida = lines[1].split(";")[1].strip()
+        except IndexError:
+            messagebox.showerror("Erro", "O arquivo não contém informações de Renda Líquida no formato esperado.")
+            return None, None, None
+
+        gastos_fixos = []
+        cartoes = []
+        mode = None
+        for line in lines[2:]:
+            # Pular linhas em branco
+            if not line.strip():
+                continue
+
+            if "Gastos Fixos" in line:
+                mode = "gastos_fixos"
+                continue
+            elif "Detalhes dos Cartões" in line:
+                mode = "cartoes"
+                continue
+            elif "Gastos do Cartão" in line:
+                mode = "gastos_cartao"
+                continue
+            elif "Descrição" in line or "Nome" in line:
+                continue  # Ignorar linhas de cabeçalho
+
+            if mode == "gastos_fixos":
+                descricao, valor = line.strip().split(";")
+                gastos_fixos.append({"descricao": descricao, "valor": valor})
+            elif mode == "cartoes":
+                nome, banco, limite = line.strip().split(";")
+                cartao = {"nome": nome, "banco": banco, "limite": limite, "gastos": []}
+                cartoes.append(cartao)
+            elif mode == "gastos_cartao":
+                descricao, valor = line.strip().split(";")
+                cartoes[-1]["gastos"].append({"descricao": descricao, "valor": valor})
+
+        return renda_liquida, gastos_fixos, cartoes
+
+    def salvar_gastos_fixos(self):
+        children = self.gastos_fixos_frame.winfo_children()
+        for i in range(0, len(children), 4):  # Considerando que temos Labels e Entries
+            descricao = children[i+1].get()  # Pegando o Entry após o Label
+            valor = children[i+3].get()      # Pegando o Entry após o Label
+            if descricao and valor:
+                gasto_fixo = {
+                    "descricao": descricao,
+                    "valor": valor
+                }
+                self.gastos_fixos.append(gasto_fixo)
+
+    def salvar_txt(self):
+        filepath = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        
+        if not filepath:
+            return
+
+        with open(filepath, "w") as file:
+            file.write("Renda Líquida\n")
+            file.write(f"Valor;{self.renda_liquida_entry.get()}\n\n")
+            
+            file.write("Gastos Fixos\n")
+            file.write("Descrição;Valor\n")  # Cabeçalho para gastos fixos
+            for gasto in self.gastos_fixos:
+                file.write(f"{gasto['descricao']};{gasto['valor']}\n")
+            file.write("\n")
+            
+            file.write("Detalhes dos Cartões\n")
+            file.write("Nome;Banco;Limite\n")  # Cabeçalho para detalhes dos cartões
+            for cartao in self.cartoes:
+                file.write(f"{cartao['nome']};{cartao['banco']};{cartao['limite']}\n")
+                
+                file.write("Gastos do Cartão\n")
+                file.write("Descrição;Valor\n")  # Cabeçalho para gastos do cartão
+                for gasto in cartao["gastos"]:
+                    file.write(f"{gasto['descricao']};{gasto['valor']}\n")
+                file.write("\n")
+
+        messagebox.showinfo("Informação", "Dados salvos com sucesso!")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
